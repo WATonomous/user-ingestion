@@ -15,6 +15,6 @@ ENV USERFUNCVOL=/deploypkg
 
 COPY --from=builder /deploypkg $USERFUNCVOL
 
-RUN printf '{"filepath": "%s/main.py", "functionName": "main"}' $USERFUNCVOL > $USERFUNCVOL/state.json
+RUN printf '{"filepath": "%s", "functionName": "main.main"}' $USERFUNCVOL > $USERFUNCVOL/state.json
 
 EXPOSE 8888
