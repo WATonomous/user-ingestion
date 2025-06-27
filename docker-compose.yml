@@ -1,0 +1,12 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8888:8888"
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./src
+          target: /deploypkg
+        - action: rebuild
+          path: ./requirements.txt
