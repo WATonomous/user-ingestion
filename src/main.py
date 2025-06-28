@@ -1,161 +1,104 @@
-import json
-import os
-from textwrap import dedent
+from string import Template
 
 from fastapi import Request
-from fastapi.responses import JSONResponse
-from github import Github, GithubException
-from pydantic import BaseModel, ValidationError
-from slugify import slugify
-from utils import (
-    assert_throws,
-    compare_line_by_line,
-    extract_payload_data,
-    extract_pr_body,
-    fission_get_config,
-    generate_data_file,
-    get_github_token,
-    logger,
-    update_pr_body,
-    wrap_pr_body,
-)
+from fastapi.responses import HTMLResponse, JSONResponse
+import jwt
+from utils import EMAIL_VERIFICATION_KEY, process_token, send_verification_email
 
-# Constants
-TARGET_REPO = fission_get_config("TARGET_REPO")
-TARGET_REPO_DATA_DIR = fission_get_config("TARGET_REPO_DATA_DIR")
-BRANCH_PREFIX = "user-ingestion-"
-MAX_BRANCH_NAME_LENGTH = 255
-MAX_FILE_NAME_LENGTH = 255
+async def handle_get(request: Request):
+    # extract token from query params
+    token = request.query_params.get("token")
 
-if not TARGET_REPO or not TARGET_REPO_DATA_DIR:
-    raise ValueError(f"Missing required configuration: {TARGET_REPO=}, {TARGET_REPO_DATA_DIR=}")
+    if not token:
+        return JSONResponse(
+            status_code=401, content={"error": "Missing token in the query params"}
+        )
 
-# Models
-class IngestPayload(BaseModel):
-    data: dict  # Flexible JSON data structure
+    # Validate the JWT
+    try:
+        jwt.decode(token, EMAIL_VERIFICATION_KEY, algorithms="HS256")
+    except jwt.InvalidTokenError:
+        return JSONResponse(status_code=401, content={"error": "Invalid token"})
+
+    return HTMLResponse(
+        status_code=200,
+        content=Template(
+            """
+            <!DOCTYPE html>
+            <html>
+            <body>
+                <h1>Verify email address</h1>
+                <button id="verify-btn">Click to verify email</button>
+                <p id="status"></p>
+
+                <script>
+                const btn = document.getElementById("verify-btn");
+                const status = document.getElementById("status");
+
+                btn.addEventListener("click", async () => {
+                    btn.disabled = true;
+                    status.innerText = "Verifying...";
+
+                    const token = "$token";
+
+                    try {
+                        const response = await fetch("", {
+                            method: "POST",
+                            headers: {
+                            "Content-Type": "application/json"
+                            },
+                            body: JSON.stringify({ token })
+                        });
+
+                        if (response.ok) {
+                            status.innerText = "Email verified successfully!";
+                            status.style.color = "green";
+                        } else {
+                            status.innerText = "Verification failed!" + response.text;
+                            status.style.color = "red";
+                        }
+                    } catch (error) {
+                        status.innerText = "Network or server error: " + error;
+                        status.style.color = "red";
+                    }
+                });
+                </script>
+            </body>
+            </html>
+        """
+        ).substitute(token=token),
+    )
+
+
+async def handle_post(request: Request):
+    try:
+        reqbody = await request.json()
+    except ValueError as e:
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid payload", "details": str(e)}
+        )
+
+    if "data" in reqbody:
+        return await send_verification_email(reqbody["data"])
+
+    if "token" in reqbody:
+        return await process_token(reqbody["token"])
+
+    return JSONResponse(
+        status_code=400,
+        content={
+            "error": "Invalid payload",
+            "details": "No handler found for this payload",
+        },
+    )
 
 async def main(request: Request):
-    try:
-        # MARK: Parse and validate payload
-        try:
-            data = await request.body()
-            payload = IngestPayload(**json.loads(data))
-            username, primary_email = extract_payload_data(payload)
-        except (json.JSONDecodeError, ValidationError, ValueError) as e:
-            return JSONResponse(
-                status_code=400,
-                content={"error": "Invalid payload", "details": str(e)}
-            )
-
-        # MARK: Prepare file content
-        file_path = f"{TARGET_REPO_DATA_DIR}/{slugify(username, max_length=MAX_FILE_NAME_LENGTH)}.yml"
-        file_content = generate_data_file(payload.data)
-
-        # MARK: Initialize GitHub client
-        g = Github(get_github_token())
-        repo = g.get_repo(TARGET_REPO)
-        default_branch = repo.get_branch(repo.default_branch)
-        branch_name = slugify(f"{BRANCH_PREFIX}{username}", max_length=MAX_BRANCH_NAME_LENGTH)
-
-        logger.info(f"GitHub rate limit remaining: {g.rate_limiting[0]} / {g.rate_limiting[1]}")
-
-        # MARK: Check for existing PR
-        org_login = (
-            repo.organization.login 
-            if hasattr(repo, "organization") and repo.organization 
-            else repo.owner.login
-        )
-        pr_head = f"{org_login}:{branch_name}"
-        prs = repo.get_pulls(head=pr_head, base=default_branch.name)
-        try:
-            pr = prs[0]
-        except IndexError:
-            pr = None
-
-        # MARK: Create or update branch
-        logger.info(f"Creating branch {branch_name} from {default_branch.commit.sha}")
-        try:
-            repo.create_git_ref(f"refs/heads/{branch_name}", default_branch.commit.sha)
-        except GithubException as e:
-            if e.status != 422:  # 422 means branch already exists
-                raise e
-            logger.info(f"Branch {branch_name} already exists")
-
-            if not pr:
-                logger.info(f"Branch {branch_name} exists, but no PR found. This is an inconsistent state. Recreating the branch...")
-                repo.get_git_ref(f"heads/{branch_name}").delete()
-                repo.create_git_ref(f"refs/heads/{branch_name}", default_branch.commit.sha)
-
-        # MARK: Create or update file
-        try:
-            existing_file = repo.get_contents(file_path, ref=branch_name)
-            if existing_file.decoded_content.decode("utf-8") == file_content:
-                logger.info(f"File {file_path} already up to date")
-            else:
-                logger.info(f"Updating file {file_path}...")
-                repo.update_file(
-                    file_path,
-                    f"Update user `{username}`",
-                    file_content,
-                    existing_file.sha,
-                    branch=branch_name
-                )
-        except GithubException as e:
-            if e.status != 404:  # 404 means file doesn't exist
-                raise e
-            existing_file = None
-            logger.info(f"Creating file {file_path}...")
-            repo.create_file(
-                file_path,
-                f"Create user `{username}`",
-                file_content,
-                branch=branch_name
-            )
-
-        # MARK: Create/Update PR
-        # Note: The repo-ingestion tag is used for backward compatibility with the reviewer/checklist logic in infra-config
-        pr_body = dedent(f"""
-            ### Introduction
-
-            This PR is automatically generated by the [user-ingestion](https://github.com/WATonomous/user-ingestion) service.
-            Please review the changes and complete the checklist(s) in the PR description (if present).
-
-            <!-- tags: user-ingestion,repo-ingestion -->
-        """)
-
-        if pr:
-            assert_throws(lambda: prs[1], IndexError, f"Expected only one PR from {pr_head} to {default_branch.name}, but found more than one")
-
-            logger.info(f"PR from {pr_head} to {default_branch.name} already exists (#{prs[0].number}). Checking if it needs to be updated...")
-
-            if compare_line_by_line(extract_pr_body(pr.body).strip(), pr_body.strip()):
-                logger.info(f"PR from {pr_head} to {default_branch.name} already exists (#{pr.number}) and is up to date")
-            else:
-                logger.info(f"PR from {pr_head} to {default_branch.name} already exists (#{pr.number}) but is out of date. Updating...")
-                pr.edit(body=update_pr_body(pr.body, pr_body))
-        else:
-            logger.info(f"PR from {pr_head} to {default_branch.name} does not exist. Creating...")
-
-            pr_title = f"Update user `{username}`" if existing_file else f"Create user `{username}`"
-
-            pr = repo.create_pull(
-                title=pr_title,
-                body=wrap_pr_body(pr_body),
-                head=pr_head,
-                base=default_branch.name
-            )
-
-        # MARK: Add label
-        pr.add_to_labels("user-ingestion")
-
-        logger.info(f"GitHub rate limit remaining: {g.rate_limiting[0]} / {g.rate_limiting[1]}")
-
-        return JSONResponse(
-            status_code=200,
-            content={"pr_url": pr.html_url}
-        )
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"error": "Ingestion failed", "details": str(e)}
+    if request.method == "GET":
+        return await handle_get(request)
+    elif request.method == "POST":
+        return await handle_post(request)
+    else:
+        raise HTTPException(
+            status_code=HTTPStatus.METHOD_NOT_ALLOWED,
+            detail=f"Method {request.method} not allowed",
         )
