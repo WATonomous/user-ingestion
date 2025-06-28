@@ -5,6 +5,8 @@ services:
       - "8888:8888"
     env_file:
       - .env
+    volumes:
+      - ./secrets:/secrets
     develop:
       watch:
         - action: sync+restart

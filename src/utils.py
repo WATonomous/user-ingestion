@@ -1,8 +1,12 @@
+from datetime import datetime, timedelta
 import logging
 import os
-from datetime import datetime, timedelta
+import time
 
+import requests
 import yaml
+
+import jwt
 
 FISSION_CONFIGS_BASE_PATH = "/configs/fission-default/user-ingestion-configs"
 FISSION_SECRETS_BASE_PATH = "/secrets/fission-default/user-ingestion-secrets"
@@ -98,6 +102,31 @@ def fission_get_secret(name):
     return None
 
 
+def get_jwt(app_id, pem_path):
+    """
+    Get a JWT for GitHub Apps authentication
+    Derived from:
+    https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation#generating-an-installation-access-token
+    """
+    with open(pem_path, 'rb') as pem_file:
+        signing_key = jwt.jwk_from_pem(pem_file.read())
+    
+    payload = {
+        # Issued at time
+        'iat': int(time.time()),
+        # JWT expiration time (10 minutes maximum)
+        'exp': int(time.time()) + 600,
+        # GitHub App's identifier
+        'iss': app_id
+    }
+
+    # Create JWT
+    jwt_instance = jwt.JWT()
+    encoded_jwt = jwt_instance.encode(payload, signing_key, alg='RS256')
+
+    return encoded_jwt
+
+
 def get_github_token():
     if hasattr(get_github_token, "cache") and datetime.strptime(get_github_token.cache["expires_at"], "%Y-%m-%dT%H:%M:%SZ") - datetime.now() > timedelta(minutes=1):
         logger.debug(f"Using cached token. Expires at {get_github_token.cache['expires_at']}")
@@ -115,13 +144,13 @@ def get_github_token():
     if not app_id or not installation_id or not pem_path:
         raise ValueError(f"Missing GitHub app configuration: {app_id=}, {installation_id=}, {pem_path=}")
 
-    jwt = get_jwt(app_id, pem_path)
+    jwttok = get_jwt(app_id, pem_path)
 
     # Get an access token for the installation
     url = f"https://api.github.com/app/installations/{installation_id}/access_tokens"
     headers = {
         'Accept': 'application/vnd.github+json',
-        'Authorization': f'Bearer {jwt}',
+        'Authorization': f'Bearer {jwttok}',
         'X-GitHub-Api-Version': '2022-11-28',
     }
 
