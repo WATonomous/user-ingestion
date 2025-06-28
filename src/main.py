@@ -17,6 +17,7 @@ from utils import (
     get_github_token,
     logger,
     update_pr_body,
+    wrap_pr_body,
 )
 
 # Constants
@@ -58,6 +59,19 @@ async def main(request: Request):
 
         logger.info(f"GitHub rate limit remaining: {g.rate_limiting[0]} / {g.rate_limiting[1]}")
 
+        # MARK: Check for existing PR
+        org_login = (
+            repo.organization.login 
+            if hasattr(repo, "organization") and repo.organization 
+            else repo.owner.login
+        )
+        pr_head = f"{org_login}:{branch_name}"
+        prs = repo.get_pulls(head=pr_head, base=default_branch.name)
+        try:
+            pr = prs[0]
+        except IndexError:
+            pr = None
+
         # MARK: Create or update branch
         logger.info(f"Creating branch {branch_name} from {default_branch.commit.sha}")
         try:
@@ -66,6 +80,11 @@ async def main(request: Request):
             if e.status != 422:  # 422 means branch already exists
                 raise e
             logger.info(f"Branch {branch_name} already exists")
+
+            if not pr:
+                logger.info(f"Branch {branch_name} exists, but no PR found. This is an inconsistent state. Recreating the branch...")
+                repo.delete_git_ref(f"refs/heads/{branch_name}")
+                repo.create_git_ref(f"refs/heads/{branch_name}", default_branch.commit.sha)
 
         # MARK: Create or update file
         try:
@@ -93,15 +112,7 @@ async def main(request: Request):
                 branch=branch_name
             )
 
-        # MARK: Create PR
-        org_login = (
-            repo.organization.login 
-            if hasattr(repo, "organization") and repo.organization 
-            else repo.owner.login
-        )
-        pr_head = f"{org_login}:{branch_name}"
-        pr_title = f"Update user `{username}`" if existing_file else f"Create user `{username}`"
-        
+        # MARK: Create/Update PR
         pr_body = dedent(f"""
             ### Introduction
 
@@ -110,26 +121,31 @@ async def main(request: Request):
 
             <!-- tags: user-ingestion -->
         """)
-        
-        try:
-            prs = repo.get_pulls(head=pr_head, base=default_branch.name)
-            pr = prs[0]
+
+        if pr:
             assert_throws(lambda: prs[1], IndexError, f"Expected only one PR from {pr_head} to {default_branch.name}, but found more than one")
-            if pr.title == pr_title and compare_line_by_line(extract_pr_body(pr.body).strip(), pr_body.strip()):
+
+            logger.info(f"PR from {pr_head} to {default_branch.name} already exists (#{prs[0].number}). Checking if it needs to be updated...")
+
+            if compare_line_by_line(extract_pr_body(pr.body).strip(), pr_body.strip()):
                 logger.info(f"PR from {pr_head} to {default_branch.name} already exists (#{pr.number}) and is up to date")
             else:
                 logger.info(f"PR from {pr_head} to {default_branch.name} already exists (#{pr.number}) but is out of date. Updating...")
-                pr.edit(title=pr_title, body=update_pr_body(pr.body, pr_body))
-                pr.add_to_labels("user-ingestion")
-        except IndexError:
+                pr.edit(body=update_pr_body(pr.body, pr_body))
+        else:
             logger.info(f"PR from {pr_head} to {default_branch.name} does not exist. Creating...")
+
+            pr_title = f"Update user `{username}`" if existing_file else f"Create user `{username}`"
+
             pr = repo.create_pull(
                 title=pr_title,
-                body=update_pr_body("", pr_body),
+                body=wrap_pr_body(pr_body),
                 head=pr_head,
                 base=default_branch.name
             )
-            pr.add_to_labels("user-ingestion")
+
+        # MARK: Add label
+        pr.add_to_labels("user-ingestion")
 
         logger.info(f"GitHub rate limit remaining: {g.rate_limiting[0]} / {g.rate_limiting[1]}")
 
