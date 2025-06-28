@@ -4,6 +4,9 @@ from datetime import datetime, timedelta
 
 import yaml
 
+FISSION_CONFIGS_BASE_PATH = "/configs/fission-default/user-ingestion-configs"
+FISSION_SECRETS_BASE_PATH = "/secrets/fission-default/user-ingestion-secrets"
+
 logger = logging.getLogger()
 
 # PR Body Helpers
@@ -74,19 +77,43 @@ def assert_throws(func, exception_class, message=None):
     else:
         raise AssertionError(message or f"{func} did not throw {exception_class}")
 
+def fission_get_config(name):
+    if os.environ.get(name):
+        return os.environ[name]
+
+    if os.path.exists(f"{FISSION_CONFIGS_BASE_PATH}/{name}"):
+        with open(f"{FISSION_CONFIGS_BASE_PATH}/{name}", "r") as f:
+            return f.read()
+
+    return None
+
+def fission_get_secret(name):
+    if os.environ.get(name):
+        return os.environ[name]
+
+    if os.path.exists(f"{FISSION_SECRETS_BASE_PATH}/{name}"):
+        with open(f"{FISSION_SECRETS_BASE_PATH}/{name}", "r") as f:
+            return f.read()
+
+    return None
+
+
 def get_github_token():
     if hasattr(get_github_token, "cache") and datetime.strptime(get_github_token.cache["expires_at"], "%Y-%m-%dT%H:%M:%SZ") - datetime.now() > timedelta(minutes=1):
         logger.debug(f"Using cached token. Expires at {get_github_token.cache['expires_at']}")
         return get_github_token.cache["token"]
 
     # Simple token
-    if os.environ.get("GITHUB_TOKEN"):
-        return os.environ["GITHUB_TOKEN"]
+    if fission_get_secret("GITHUB_TOKEN"):
+        return fission_get_secret("GITHUB_TOKEN")
 
     # App installation token
-    app_id = os.environ["GITHUB_APP_ID"]
-    installation_id = os.environ["GITHUB_APP_INSTALLATION_ID"]
-    pem_path = os.environ["GITHUB_APP_PRIVATE_KEY_PATH"]
+    app_id = fission_get_config("GITHUB_APP_ID")
+    installation_id = fission_get_config("GITHUB_APP_INSTALLATION_ID")
+    pem_path = fission_get_config("GITHUB_APP_PRIVATE_KEY_PATH")
+
+    if not app_id or not installation_id or not pem_path:
+        raise ValueError(f"Missing GitHub app configuration: {app_id=}, {installation_id=}, {pem_path=}")
 
     jwt = get_jwt(app_id, pem_path)
 
