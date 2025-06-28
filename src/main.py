@@ -1,5 +1,4 @@
 import json
-import logging
 import os
 from textwrap import dedent
 
@@ -8,14 +7,20 @@ from fastapi.responses import JSONResponse
 from github import Github, GithubException
 from pydantic import BaseModel, ValidationError
 from slugify import slugify
-from utils import extract_payload_data, generate_data_file, update_pr_body, assert_throws, compare_line_by_line, extract_pr_body
-
-logger = logging.getLogger(__name__)
+from utils import (
+    assert_throws,
+    compare_line_by_line,
+    extract_payload_data,
+    extract_pr_body,
+    generate_data_file,
+    get_github_token,
+    logger,
+    update_pr_body,
+)
 
 # Constants
 TARGET_REPO = os.environ["TARGET_REPO"]
 TARGET_REPO_DATA_DIR = os.environ["TARGET_REPO_DATA_DIR"]
-GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 BRANCH_PREFIX = "user-ingestion-"
 MAX_BRANCH_NAME_LENGTH = 255
 MAX_FILE_NAME_LENGTH = 255
@@ -42,7 +47,7 @@ async def main(request: Request):
         file_content = generate_data_file(payload.data)
 
         # MARK: Initialize GitHub client
-        g = Github(GITHUB_TOKEN)
+        g = Github(get_github_token())
         repo = g.get_repo(TARGET_REPO)
         default_branch = repo.get_branch(repo.default_branch)
         branch_name = slugify(f"{BRANCH_PREFIX}{username}", max_length=MAX_BRANCH_NAME_LENGTH)

@@ -1,7 +1,10 @@
-from typing import List
-from pydantic import BaseModel
+import logging
 import os
+from datetime import datetime, timedelta
+
 import yaml
+
+logger = logging.getLogger()
 
 # PR Body Helpers
 pr_body_prefix = "<!-- This section is manged by repo-ingestion-bot. Please Do not edit manually! -->"
@@ -70,3 +73,35 @@ def assert_throws(func, exception_class, message=None):
         pass
     else:
         raise AssertionError(message or f"{func} did not throw {exception_class}")
+
+def get_github_token():
+    if hasattr(get_github_token, "cache") and datetime.strptime(get_github_token.cache["expires_at"], "%Y-%m-%dT%H:%M:%SZ") - datetime.now() > timedelta(minutes=1):
+        logger.debug(f"Using cached token. Expires at {get_github_token.cache['expires_at']}")
+        return get_github_token.cache["token"]
+
+    # Simple token
+    if os.environ.get("GITHUB_TOKEN"):
+        return os.environ["GITHUB_TOKEN"]
+
+    # App installation token
+    app_id = os.environ["GITHUB_APP_ID"]
+    installation_id = os.environ["GITHUB_APP_INSTALLATION_ID"]
+    pem_path = os.environ["GITHUB_APP_PRIVATE_KEY_PATH"]
+
+    jwt = get_jwt(app_id, pem_path)
+
+    # Get an access token for the installation
+    url = f"https://api.github.com/app/installations/{installation_id}/access_tokens"
+    headers = {
+        'Accept': 'application/vnd.github+json',
+        'Authorization': f'Bearer {jwt}',
+        'X-GitHub-Api-Version': '2022-11-28',
+    }
+
+    response = requests.post(url, headers=headers)
+    response.raise_for_status()
+
+    get_github_token.cache = response.json()
+
+    logger.debug(f"Generated new token. Expires at {get_github_token.cache['expires_at']}")
+    return get_github_token.cache["token"]
