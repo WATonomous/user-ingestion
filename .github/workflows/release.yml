@@ -1,0 +1,39 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency: release_${{ github.ref }}
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4.2.1
+
+      # TODO: build and test
+
+      - if: startsWith(github.ref, 'refs/tags/')
+        name: Create source distribution
+        run: |
+          mkdir -p dist
+          tar -czvf dist/sourcepkg.tar.gz ./requirements.txt -C ./src .
+          
+          # Create a checksum
+          cd dist
+          shasum -a 256 sourcepkg.tar.gz > sourcepkg.tar.gz.sha256
+
+      - if: startsWith(github.ref, 'refs/tags/')
+        name: Create GitHub Release
+        uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2.0.8
+        with:
+          files: 
+            dist/sourcepkg.tar.gz
+            dist/sourcepkg.tar.gz.sha256
