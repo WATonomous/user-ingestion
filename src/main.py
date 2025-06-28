@@ -12,6 +12,7 @@ from utils import (
     compare_line_by_line,
     extract_payload_data,
     extract_pr_body,
+    fission_get_config,
     generate_data_file,
     get_github_token,
     logger,
@@ -19,11 +20,14 @@ from utils import (
 )
 
 # Constants
-TARGET_REPO = os.environ["TARGET_REPO"]
-TARGET_REPO_DATA_DIR = os.environ["TARGET_REPO_DATA_DIR"]
+TARGET_REPO = fission_get_config("TARGET_REPO")
+TARGET_REPO_DATA_DIR = fission_get_config("TARGET_REPO_DATA_DIR")
 BRANCH_PREFIX = "user-ingestion-"
 MAX_BRANCH_NAME_LENGTH = 255
 MAX_FILE_NAME_LENGTH = 255
+
+if not TARGET_REPO or not TARGET_REPO_DATA_DIR:
+    raise ValueError(f"Missing required configuration: {TARGET_REPO=}, {TARGET_REPO_DATA_DIR=}")
 
 # Models
 class IngestPayload(BaseModel):
