@@ -34,6 +34,5 @@ jobs:
         name: Create GitHub Release
         uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2.0.8
         with:
-          files: 
-            dist/sourcepkg.tar.gz
-            dist/sourcepkg.tar.gz.sha256
+          files: |
+            dist/*
