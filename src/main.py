@@ -83,7 +83,7 @@ async def main(request: Request):
 
             if not pr:
                 logger.info(f"Branch {branch_name} exists, but no PR found. This is an inconsistent state. Recreating the branch...")
-                repo.delete_git_ref(f"refs/heads/{branch_name}")
+                repo.get_git_ref(f"heads/{branch_name}").delete()
                 repo.create_git_ref(f"refs/heads/{branch_name}", default_branch.commit.sha)
 
         # MARK: Create or update file
