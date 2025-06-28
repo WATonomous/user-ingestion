@@ -3,6 +3,8 @@ services:
     build: .
     ports:
       - "8888:8888"
+    env_file:
+      - .env
     develop:
       watch:
         - action: sync+restart
