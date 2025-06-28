@@ -1,6 +1,12 @@
 # user-ingestion
 
-A service for ingesting user data and creating pull requests with the data.
+A service for ingesting user data and creating GitHub pull requests. Used by [WATcloud](https://cloud.watonomous.ca).
+
+## Local Development
+
+```sh
+docker compose up app --build --watch
+```
 
 ## Payload Structure
 
@@ -10,8 +16,7 @@ The service expects a JSON payload with the following structure:
 {
   "data": {
     "general": {
-      "username": "johndoe",
-      "email": "john@example.com",
+      "watcloud_username": "johndoe",
       "contact_emails": ["john@example.com", "johndoe@work.com"]
     },
     "other_fields": "can be any additional data"
@@ -20,15 +25,5 @@ The service expects a JSON payload with the following structure:
 ```
 
 ### Required Fields
-- `data.general.username`: String - Unique identifier for the user
-
-### Optional Fields
-- `data.general.email`: String - Primary email address (either this or contact_emails is required)
-- `data.general.contact_emails`: Array of strings - List of contact emails (will use first one if email is not provided)
-- Any additional fields can be included in the `data` object and will be stored as-is
-
-## Local Development
-
-```sh
-docker compose up app --build --watch
-```
+- `data.general.watcloud_username`: String - Unique identifier for the user.
+- `data.general.contact_emails`: Array of strings - Non-empty list of contact emails. The first email will be used for email verification.
