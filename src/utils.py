@@ -109,8 +109,8 @@ def get_jwt(app_id, pem_path):
     https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation#generating-an-installation-access-token
     """
     with open(pem_path, 'rb') as pem_file:
-        signing_key = jwt.jwk_from_pem(pem_file.read())
-    
+        signing_key = pem_file.read()
+
     payload = {
         # Issued at time
         'iat': int(time.time()),
@@ -121,8 +121,7 @@ def get_jwt(app_id, pem_path):
     }
 
     # Create JWT
-    jwt_instance = jwt.JWT()
-    encoded_jwt = jwt_instance.encode(payload, signing_key, alg='RS256')
+    encoded_jwt = jwt.encode(payload, signing_key, algorithm='RS256')
 
     return encoded_jwt
 
